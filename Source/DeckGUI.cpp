@@ -2,8 +2,8 @@
   ==============================================================================
 
     DeckGUI.cpp
-    Created: 13 Mar 2020 6:44:48pm
-    Author:  matthew
+    Created: 13 Jan 2021 6:44:48pm
+    Author:  Mary-Brenda Akoda
 
   ==============================================================================
 */
@@ -13,39 +13,37 @@
 
 //==============================================================================
 DeckGUI::DeckGUI(DJAudioPlayer* _player, 
-                AudioFormatManager & 	formatManagerToUse,
-                AudioThumbnailCache & 	cacheToUse
-           ) : player(_player), 
-               waveformDisplay(formatManagerToUse, cacheToUse)
+                 juce::AudioFormatManager & formatManagerToUse,
+                 juce::AudioThumbnailCache & cacheToUse,
+                 juce::Colour& colourToUse,
+                 juce::TooltipWindow* _tooltipWindow
+                ) : player(_player), 
+                    formatManager(formatManagerToUse),
+                    waveformDisplay(formatManagerToUse, cacheToUse, colourToUse),
+                    accentColour(colourToUse),
+                    tooltipWindow(_tooltipWindow),
+                    isLoaded(false),
+                    userExperienceLevel(0)
 {
-
+    // Get disc record image to display.
+    disc = getImageFromResources("disc-record-resized-207.png");
+    
     addAndMakeVisible(playButton);
+    addAndMakeVisible(pauseButton);
     addAndMakeVisible(stopButton);
     addAndMakeVisible(loadButton);
-       
-    addAndMakeVisible(volSlider);
-    addAndMakeVisible(speedSlider);
     addAndMakeVisible(posSlider);
-
     addAndMakeVisible(waveformDisplay);
 
-
     playButton.addListener(this);
+    pauseButton.addListener(this);
     stopButton.addListener(this);
     loadButton.addListener(this);
-
-    volSlider.addListener(this);
-    speedSlider.addListener(this);
     posSlider.addListener(this);
-
-
-    volSlider.setRange(0.0, 1.0);
-    speedSlider.setRange(0.0, 100.0);
+  
     posSlider.setRange(0.0, 1.0);
 
     startTimer(500);
-
-
 }
 
 DeckGUI::~DeckGUI()
@@ -53,105 +51,328 @@ DeckGUI::~DeckGUI()
     stopTimer();
 }
 
-void DeckGUI::paint (Graphics& g)
+void DeckGUI::paint (juce::Graphics& g)
 {
-    /* This demo code just fills the component's background and
-       draws some placeholder text to get you started.
+    double layoutH = (double) (getHeight() / 3);
+    double rowH = (double) (getHeight() / 8);
+    double buttonW = (double) (getWidth() / 10);
 
-       You should replace everything in this method with your own
-       drawing code..
-    */
+    // Fill background.
+    g.fillAll(juce::Colour::fromRGBA(40, 40, 40, 255));
+    
+    g.setColour(juce::Colours::yellowgreen);
+    
+    // Style buttons and change appearance on click.
+    g.drawRoundedRectangle(buttonW - 8, rowH * 7.1 - 2, buttonW * 2, rowH / 1.2 + 2, 6, 0.5);
+    if (playButton.getToggleState())
+    {
+        g.fillRoundedRectangle(buttonW - 8, rowH * 7.1 - 2, buttonW * 2, rowH / 1.2 + 2, 6);
+    }
 
-    g.fillAll (getLookAndFeel().findColour (ResizableWindow::backgroundColourId));   // clear the background
+    g.drawRoundedRectangle(buttonW * 3, rowH * 7.1 - 2, buttonW * 2, rowH / 1.2 + 2, 6, 0.5);
+    if (pauseButton.getToggleState())
+    {
+        g.fillRoundedRectangle(buttonW * 3, rowH * 7.1 - 2, buttonW * 2, rowH / 1.2 + 2, 6);
+    }
+    
+    g.drawRoundedRectangle(buttonW * 5 + 8, rowH * 7.1 - 2, buttonW * 2, rowH / 1.2 + 2, 6, 0.5);
+    if (stopButton.getToggleState())
+    {
+        g.fillRoundedRectangle(buttonW * 5 + 8, rowH * 7.1 - 2, buttonW * 2, rowH / 1.2 + 2, 6);
+    }
+    
+    g.drawRoundedRectangle(buttonW * 7 + 16, rowH * 7.1 - 2, buttonW * 2, rowH / 1.2 + 2, 6, 0.5);
+    if (loadButton.getToggleState())
+    {
+        g.fillRoundedRectangle(buttonW * 7 + 16, rowH * 7.1 - 2, buttonW * 2, rowH / 1.2 + 2, 6);
+    }
 
-    g.setColour (Colours::grey);
-    g.drawRect (getLocalBounds(), 1);   // draw an outline around the component
+    // Set position and transform for disc image.
+    g.setOrigin(((getWidth() / static_cast<double>(4)) - rowH / 2) + ((getWidth() / 1.5) - 5)/2, 
+                (layoutH - 10) + ((getHeight() - (layoutH - rowH / 2)) / 1.5)/2);
 
-    g.setColour (Colours::white);
-    g.setFont (14.0f);
-    g.drawText ("DeckGUI", getLocalBounds(),
-                Justification::centred, true);   // draw some placeholder text
+    // Position origin of disc rotation.
+    juce::AffineTransform transform(AffineTransform::translation((float)(disc.getWidth() / -2),
+                                                           (float)(disc.getHeight() / -2)));
+
+    // Draw disc rotation on file load and play.
+    transform = transform.followedBy(getTransform());
+
+    // Draw the disc image transformation.
+    g.drawImageTransformed(disc, transform, false);
+
+    repaint();
 }
 
 void DeckGUI::resized()
 {
-    double rowH = getHeight() / 8; 
-    playButton.setBounds(0, 0, getWidth(), rowH);
-    stopButton.setBounds(0, rowH, getWidth(), rowH);  
-    volSlider.setBounds(0, rowH * 2, getWidth(), rowH);
-    speedSlider.setBounds(0, rowH * 3, getWidth(), rowH);
-    posSlider.setBounds(0, rowH * 4, getWidth(), rowH);
-    waveformDisplay.setBounds(0, rowH * 5, getWidth(), rowH * 2);
-    loadButton.setBounds(0, rowH * 7, getWidth(), rowH);
+    double rowH = (double) (getHeight() / 8);
+    double rowW = (double) (getWidth() / 8);
+    double buttonW = (double) (getWidth() / 10);
+    double layoutH = (double) (getHeight() / 3);
 
+    styleButton(playButton, buttonW - 8);
+    styleButton(pauseButton, buttonW * 3);
+    styleButton(stopButton, buttonW * 5 + 8);
+    styleButton(loadButton, buttonW * 7 + 16);
+
+    posSlider.setBounds(rowW, rowH * 2, rowW * 6, rowH * 5);
+    posSlider.setSliderStyle(juce::Slider::SliderStyle::RotaryHorizontalDrag);
+    posSlider.setMouseCursor(juce::MouseCursor::DraggingHandCursor);
+    posSlider.setTextBoxStyle(juce::Slider::TextEntryBoxPosition::NoTextBox, true, 0, 0);
+    posSlider.setColour(juce::Slider::ColourIds::thumbColourId, accentColour);
+    posSlider.setColour(juce::Slider::ColourIds::rotarySliderFillColourId, juce::Colours::yellowgreen);
+    posSlider.setRotaryParameters(juce::MathConstants<float>::pi,
+                                  juce::MathConstants<float>::twoPi + juce::MathConstants<float>::pi, 
+                                  true);
+
+    waveformDisplay.setBounds(0, 0, getWidth(), layoutH - rowH / 2);
 }
 
-void DeckGUI::buttonClicked(Button* button)
+void DeckGUI::buttonClicked(juce::Button* button)
 {
     if (button == &playButton)
     {
-        std::cout << "Play button was clicked " << std::endl;
         player->start();
-    }
-     if (button == &stopButton)
-    {
-        std::cout << "Stop button was clicked " << std::endl;
-        player->stop();
 
+        if (isLoaded)
+        {
+            playButton.setToggleState(true, juce::NotificationType::dontSendNotification);
+            pauseButton.setToggleState(false, juce::NotificationType::dontSendNotification);
+            stopButton.setToggleState(false, juce::NotificationType::dontSendNotification);
+            loadButton.setToggleState(false, juce::NotificationType::dontSendNotification);
+        }
     }
+
+    if (button == &pauseButton)
+    {
+        player->pause();
+        
+        if (isLoaded)
+        {
+            playButton.setToggleState(false, juce::NotificationType::dontSendNotification);
+            pauseButton.setToggleState(true, juce::NotificationType::dontSendNotification);
+            stopButton.setToggleState(false, juce::NotificationType::dontSendNotification);
+            loadButton.setToggleState(false, juce::NotificationType::dontSendNotification);
+        }
+    }
+    
+    if (button == &stopButton)
+    {
+        player->stop();
+        
+        if (isLoaded)
+        {
+            playButton.setToggleState(false, juce::NotificationType::dontSendNotification);
+            pauseButton.setToggleState(false, juce::NotificationType::dontSendNotification);
+            stopButton.setToggleState(true, juce::NotificationType::dontSendNotification);
+            loadButton.setToggleState(false, juce::NotificationType::dontSendNotification);
+        }
+    }
+    
     if (button == &loadButton)
     {
-        FileChooser chooser{"Select a file..."};
+        if (isLoaded)
+        {
+            playButton.setToggleState(false, juce::NotificationType::dontSendNotification);
+            pauseButton.setToggleState(false, juce::NotificationType::dontSendNotification);
+            stopButton.setToggleState(false, juce::NotificationType::dontSendNotification);
+            loadButton.setToggleState(true, juce::NotificationType::dontSendNotification);
+        }
+
+        juce::FileChooser chooser{"Select a music file..."};
+
         if (chooser.browseForFileToOpen())
         {
-            player->loadURL(URL{chooser.getResult()});
-            waveformDisplay.loadURL(URL{chooser.getResult()});
+            juce::File trackFile = chooser.getResult();
+            juce::String trackName = getSongTitle(trackFile);
+            juce::String trackLength = getSongLength(trackFile);
+            juce::URL trackPath = juce::URL{ trackFile };
+
+            player->loadURL(trackPath);
+            waveformDisplay.loadFile(trackName, trackLength, trackPath);
             
+            isLoaded = true;
+            playButton.setToggleState(false, juce::NotificationType::dontSendNotification);
+            pauseButton.setToggleState(false, juce::NotificationType::dontSendNotification);
+            stopButton.setToggleState(false, juce::NotificationType::dontSendNotification);
+            loadButton.setToggleState(false, juce::NotificationType::dontSendNotification);
+            
+            userExperienceLevel++;
         }
     }
 }
 
-void DeckGUI::sliderValueChanged (Slider *slider)
+void DeckGUI::sliderValueChanged (juce::Slider *slider)
 {
-    if (slider == &volSlider)
-    {
-        player->setGain(slider->getValue());
-    }
-
-    if (slider == &speedSlider)
-    {
-        player->setSpeed(slider->getValue());
-    }
-    
     if (slider == &posSlider)
     {
-        player->setPositionRelative(slider->getValue());
+        double sliderValue = slider->getValue();
+        
+        if (sliderValue >= 1.0)
+        {
+            sliderValue = 0.0;
+            player->setPositionRelative(sliderValue);
+            player->start();
+        }
+        else
+        {
+            player->setPositionRelative(sliderValue);
+        }
     }
-    
 }
 
-bool DeckGUI::isInterestedInFileDrag (const StringArray &files)
+bool DeckGUI::isInterestedInFileDrag (const juce::StringArray &files)
 {
-  std::cout << "DeckGUI::isInterestedInFileDrag" << std::endl;
   return true; 
 }
 
-void DeckGUI::filesDropped (const StringArray &files, int x, int y)
+void DeckGUI::filesDropped (const juce::StringArray &files, int x, int y)
 {
-  std::cout << "DeckGUI::filesDropped" << std::endl;
-  if (files.size() == 1)
-  {
-    player->loadURL(URL{File{files[0]}});
-  }
+    if (files.size() == 1)
+    {
+        juce::String trackName = getSongTitle(juce::File{ files[0] });
+        juce::String trackLength = getSongLength(juce::File{ files[0] });
+        juce::URL trackPath = juce::URL{ juce::File{files[0]} };
+        player->loadURL(trackPath);
+        waveformDisplay.loadFile(trackName, trackLength, trackPath);
+
+        isLoaded = true;
+        playButton.setToggleState(false, juce::NotificationType::dontSendNotification);
+        pauseButton.setToggleState(false, juce::NotificationType::dontSendNotification);
+        stopButton.setToggleState(false, juce::NotificationType::dontSendNotification);
+        loadButton.setToggleState(false, juce::NotificationType::dontSendNotification);
+        
+        userExperienceLevel++;
+    }
 }
 
 void DeckGUI::timerCallback()
 {
-    //std::cout << "DeckGUI::timerCallback" << std::endl;
-    waveformDisplay.setPositionRelative(
-            player->getPositionRelative());
+    double relativePosition = player->getPositionRelative();
+
+    if (!isnan(relativePosition))
+    {
+        waveformDisplay.setPositionRelative(relativePosition);
+        waveformDisplay.updateTrackDuration(player->getPosInTrack());
+        posSlider.setValue(relativePosition);
+    }
+
+    if (userExperienceLevel <= 2)
+    {
+        posSlider.setTooltip("Click and drag disc to the right or \nleft to change the current position.");
+    }
+    else
+    {
+        posSlider.setTooltip("");
+    }
 }
 
+void DeckGUI::loadTrack(juce::String trackName, juce::String trackLength, juce::URL trackPath)
+{
+    player->loadURL(trackPath);
+    waveformDisplay.loadFile(trackName, trackLength, trackPath);
 
+    isLoaded = true;
+    playButton.setToggleState(false, juce::NotificationType::dontSendNotification);
+    pauseButton.setToggleState(false, juce::NotificationType::dontSendNotification);
+    stopButton.setToggleState(false, juce::NotificationType::dontSendNotification);
+    loadButton.setToggleState(false, juce::NotificationType::dontSendNotification);
     
+    userExperienceLevel++;
+}
 
+juce::String DeckGUI::getSongTitle(juce::File songFile)
+{
+    juce::String songTitle{ songFile.getFileNameWithoutExtension() };
+    return songTitle;
+}
+
+juce::String DeckGUI::getSongLength(juce::File songFile)
+{
+    int numSamples{0};
+    double sampleRate{0.0};
+    double lengthInSecs{0.0};
+    auto* reader = formatManager.createReaderFor(juce::URL{ songFile }.createInputStream(false));
+
+    if (reader != nullptr) // good file!
+    {
+        numSamples = reader->lengthInSamples;
+        sampleRate = reader->sampleRate;
+        lengthInSecs = numSamples / sampleRate;
+    }
+
+    // Delete reader after use to prevent memory leaks.
+    delete reader;
+
+    int minutes = floor(lengthInSecs / 60.0);
+    int seconds = floor(lengthInSecs - (minutes * 60));
+
+    juce::String songLength;
+
+    if (seconds >= 0 && seconds < 10)
+    {
+        songLength = juce::String{ minutes } + ":0" + juce::String{ seconds };
+    }
+    else
+    {
+        songLength = juce::String{ minutes } + ":" + juce::String{ seconds };
+    }
+
+    return songLength;
+}
+
+inline std::unique_ptr<juce::InputStream> DeckGUI::createImgFileInputStream(const char* resourcePath)
+{
+    auto dir = juce::File::getCurrentWorkingDirectory();
+    
+    int numTries = 0;    
+    while (!dir.getChildFile("Resources").exists() && numTries++ < 15)
+    {
+        dir = dir.getParentDirectory();
+    }
+    
+    auto imageFile = dir.getChildFile("Resources").getChildFile(resourcePath);
+    jassert(imageFile.existsAsFile());
+
+    return imageFile.createInputStream();
+}
+
+inline juce::Image DeckGUI::getImageFromResources(const char* imageName)
+{
+    auto hashCode = (juce::String(imageName) + "@otodecks_resources").hashCode64();
+    auto img = juce::ImageCache::getFromHashCode(hashCode);
+
+    if (img.isNull())
+    {
+        std::unique_ptr<juce::InputStream> discImgStream(createImgFileInputStream(imageName));
+
+        if (discImgStream == nullptr)
+            return {};
+
+        img = juce::ImageFileFormat::loadFrom(*discImgStream);
+
+        juce::ImageCache::addImageToCache(img, hashCode);
+    }
+
+    return img;
+}
+
+void DeckGUI::styleButton(juce::TextButton& button, double x)
+{
+    double rowH = (double) (getHeight() / 8);
+    double buttonW = (double) (getWidth() / 10);
+
+    button.setBounds(x, rowH * 7.1 - 2, buttonW * 2, rowH / 1.2);
+    button.setColour(juce::TextButton::ColourIds::buttonColourId, juce::Colours::black);
+    button.setColour(juce::TextButton::ColourIds::textColourOffId, accentColour);
+    button.setMouseCursor(juce::MouseCursor::PointingHandCursor);
+}
+
+juce::AffineTransform DeckGUI::getTransform()
+{
+    juce::AffineTransform t;
+    t = t.rotated(fmod(0.15 * player->getPosInTrack(), 2.0) * juce::MathConstants<float>::twoPi);
+
+    return t;
+}
